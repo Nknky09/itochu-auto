@@ -1,0 +1,9 @@
+pymupdf
+pytesseract
+pdf2image
+sqlalchemy
+psycopg2-binary
+playwright
+numpy
+tabula_py
+pandas
