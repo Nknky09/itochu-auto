@@ -14,6 +14,7 @@ def get_latest_pdf(folder_path):
   return latest
 
 def main():
+  init_db()
   pdf_path = get_latest_pdf(WATCH_FOLDER)
   if not pdf_path:
     print("No PDF files found.")

@@ -17,5 +17,6 @@ class ShipmentExtract(Base):
   tracking_number = Column(String)
   carrier = Column(String)
   processed_at = Column(DateTime, default=datetime.now)
+  processed = Column(Integer, default=0)
 
   
