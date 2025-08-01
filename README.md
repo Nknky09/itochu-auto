@@ -6,7 +6,5 @@ python -m shipper.shipper
 
 playwright codegen https://www-kiltst.wisegrid.net/Portals/TWD/Desktop#
 
-#5 Booking party not working
-need to get fields from playwright, clear the field, add KLINELUS001
-
-#6 Consignor not working
+Up to - # 7 Reference Number Fields
+Forgot to get field elemenet for The tab, got everything else
