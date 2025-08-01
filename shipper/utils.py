@@ -19,4 +19,10 @@ def mark_shipment_processed(shipment_id):
   finally:
     db.close()
 
+def get_latest_shipment():
+  db = SessionLocal()
+  try: 
+    return db.query(ShipmentExtract).order_by(ShipmentExtract.id.desc()).first()
+  finally:
+    db.close()
     
