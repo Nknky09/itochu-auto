@@ -4,7 +4,9 @@ from extractor.extractor import extract_pdf_data
 from database.db import init_db
 from database.utils import save_shipment
 
-WATCH_FOLDER = r"C:\Users\kosei\OneDrive - K Line Logistics U.S.A. Inc\Itochu Aviation (America) CH-47 - General\On Hand Report"
+#work PC - WATCH_FOLDER = r"C:\Users\kosei\OneDrive - K Line Logistics U.S.A. Inc\Itochu Aviation (America) CH-47 - General\On Hand Report"
+#home PC
+WATCH_FOLDER = r"C:\Users\Kosei\Projects\itochu-auto"
 
 def get_latest_pdf(folder_path):
   pdf_files = [f for f in Path(folder_path).glob("*.pdf")]

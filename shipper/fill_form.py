@@ -139,38 +139,93 @@ def fill_new_shipment_form(page, shipment, rcn_number):
   print(f"Consignor: Selected address '{db_address}' and close dialog.")
 
   
-  # -- 7 Reference Numbers Section ----
-  page.get_by_text("Reference Numbers").click()
-  page.wait_for_timeout(500)
+  # --- 7. References Section (one time only) ---
+  try:
+      page.locator('.gwOptionButtonGrid__wrap > div:nth-child(4)').click(timeout=2000)
+      page.wait_for_timeout(400)
+  except Exception:
+      pass
+  try:
+      references_label = page.get_by_text('References', exact=True)
+      references_label.wait_for(timeout=3000)
+      if not references_label.is_visible():
+          references_label.click()
+          page.wait_for_timeout(400)
+  except Exception:
+      pass
+  try:
+      ref_numbers_label = page.get_by_text("Reference Numbers")
+      ref_numbers_label.wait_for(state="visible", timeout=10000)
+      ref_numbers_label.click()
+      page.wait_for_timeout(500)
+  except Exception:
+      try:
+          alt_ref_numbers_label = page.get_by_text("Reference Numbers (0)")
+          alt_ref_numbers_label.wait_for(state="visible", timeout=5000)
+          alt_ref_numbers_label.click()
+          page.wait_for_timeout(500)
+      except Exception:
+          pass  # Already open or area not present
 
-  # 1 Shipper Reference #
-  add_reference_row(page, 'SHR', "Shipper Reference Number", f"{rcn_number} BOEING")
-
-  # 2 Other (reference_no)
+    # --- Add each Reference Row by Label ---
+  add_reference_row(page, "SHR", "Shipper Reference Number", f"{rcn_number} BOEING")
   add_reference_row(page, "OTH", "Other", shipment.reference_no)
-
-  # 3 Other (order_no)
   add_reference_row(page, "OTH", "Other", shipment.order_no)
-
-  # 4 Master Bill (carrier)
   add_reference_row(page, "MAB", "Master Bill", shipment.carrier)
-
 
   time.sleep(60)
 
 
-  def add_reference_row(page, ref_code, ref_label, value):
+def add_reference_row(page, ref_code, ref_label, value):
+    # Click add row
     page.get_by_role("button", name="").nth(2).click()
+    page.wait_for_timeout(300)
 
-    searchbox = page.locator('input.select2-search_field')
-    searchbox.wait_for(timeout=2000)
+    # Select code/type
+    searchbox = page.locator('input.select2-search__field')
+    searchbox.wait_for(timeout=3000)
     searchbox.fill(ref_code)
-    page.wait_for_timeout(500)
-
+    page.wait_for_timeout(200)
     page.get_by_role("option").get_by_text(ref_label, exact=True).click()
 
-    page.locator('input[title="Reference"]').last.wait_for(timeout=1000)
-    page.locator('input[title="Reference"]').last.fill(value)
-    page.wait_for_timeout(500)
+    # Find the Reference Numbers table (should be immediately after the header)
+    table_headers = page.locator('text=Reference Numbers')
+    ref_table = table_headers.nth(0).locator('xpath=following::div[contains(@class,"koGrid")]').first
+    table_rows = ref_table.locator('.kgRow.kgNonFixedRow:not(.add-row)')
+    table_rows.first.wait_for(timeout=3000)
+
+    # --- Debug: Print all table rows/cells ---
+    print("Number of data rows in Reference Numbers table:", table_rows.count())
+    for idx in range(table_rows.count()):
+        row = table_rows.nth(idx)
+        print("==== ROW HTML ====")
+        print(row.inner_html())
+        # Try to find input fields
+        inputs = row.locator('input')
+        print(f"Inputs found: {inputs.count()}")
+        for i in range(inputs.count()):
+            print(f"  Input {i}: title={inputs.nth(i).get_attribute('title')}, type={inputs.nth(i).get_attribute('type')}")
+
+
+    # Look for the row whose first cell matches ref_label or ref_code
+    found = False
+    for idx in range(table_rows.count()):
+        row = table_rows.nth(idx)
+        first_cell = row.locator('div.kgCell.kgCellText').first
+        first_text = first_cell.inner_text().strip().upper()
+        if ref_label.upper() in first_text or ref_code.upper() in first_text:
+            ref_cell = row.locator('div.kgCell.gwTextBox-column')
+            if ref_cell.count() > 0:
+                ref_cell.first.click()
+                page.wait_for_timeout(100)
+                ref_input = ref_cell.first.locator('input[type="text"]')
+                ref_input.wait_for(timeout=3000)
+                ref_input.fill(value)
+                print(f"Filled reference '{value}' in row {idx}")
+                found = True
+                break
+    if not found:
+        print(f"ERROR: Could not find reference row for {ref_code} {ref_label}")
+
 
 
