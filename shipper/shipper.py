@@ -11,7 +11,7 @@ def run_shipper_flow():
   shipment = get_latest_shipment()
   if not shipment:
     print("No unprocessed shipments in database.")
-    return
+    return None, None
 
   with sync_playwright() as p:
     browser = p.chromium.launch(headless=False)
@@ -24,9 +24,9 @@ def run_shipper_flow():
     rcn_number = get_highest_rcn_reference(page)
     click_new_receive_consignments(page)
 
-    fill_new_shipment_form(page, shipment, rcn_number)   
+    rc_num = fill_new_shipment_form(page, shipment, rcn_number)   
 
-    return rcn_number 
+    return rcn_number, rc_num
   
 
 if __name__ == "__main__":

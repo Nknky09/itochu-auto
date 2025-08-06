@@ -38,4 +38,12 @@ def fill_new_shipment_form(page, shipment, rcn_number):
     open_packages_edit(page)
     fill_edit_package_and_complete(page, shipment)
 
+
+    # --- Get RC Number --- 
+    page.wait_for_selector('span.wtg-label.wtg-typography-title', timeout=10000)
+    rc_num = page.locator('span.wtg-label.wtg-typography-title').first.inner_text().strip()
+    print(f"Extracted RC#: {rc_num}")
+
     time.sleep(2)
+
+    return rc_num

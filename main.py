@@ -35,8 +35,8 @@ def send_summary_email(successful, failed):
   body = "The following shipments were processed:\n\n"
   if successful:
     body += "Completed:\n"
-    for fname, data, rcn_number in successful:
-      body += f"{rcn_number} BOEING\n\n"
+    for fname, data, rcn_number, rc_num in successful:
+      body += f"RC #: {rc_num} | RCN Reference #: {rcn_number} BOEING\n\n"
       body += f"{fname}\n"
       for key, value in data.items():
         body += f" {key}: {value}\n"
@@ -67,9 +67,9 @@ def process_new_pdfs():
       print(f"Processing {pdf}")
       data = extract_pdf_data(str(pdf))
       save_shipment(data, filename=pdf.name)
-      rcn_number = run_shipper_flow()
+      rcn_number, rc_num = run_shipper_flow()
       shutil.move(str(pdf), COMPLETED_FOLDER / pdf.name)
-      successful.append((pdf.name, data, rcn_number))
+      successful.append((pdf.name, data, rcn_number, rc_num))
     except Exception as e:
       print(f"Failed on {pdf}: {e}")
       shutil.move(str(pdf), ISSUE_FOLDER / pdf.name)
