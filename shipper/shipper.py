@@ -24,7 +24,9 @@ def run_shipper_flow():
     rcn_number = get_highest_rcn_reference(page)
     click_new_receive_consignments(page)
 
-    fill_new_shipment_form(page, shipment, rcn_number)    
+    fill_new_shipment_form(page, shipment, rcn_number)   
+
+    return rcn_number 
   
 
 if __name__ == "__main__":
