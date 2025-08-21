@@ -8,7 +8,6 @@ from extractor.extractor import extract_pdf_data
 from database.db import init_db
 from database.utils import save_shipment
 from shipper.shipper import run_shipper_flow
-
 import smtplib
 from email.message import EmailMessage
 

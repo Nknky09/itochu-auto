@@ -12,7 +12,7 @@ def fill_consignor(page, shipment):
     page.locator(".gwJobDocAddress-company-search .icon-search").nth(1).click()
 
     dialog = page.get_by_role('dialog')
-    dialog.locator('.g-search-list-mask').wait_for(state='hidden', timeout=2000)
+    dialog.locator('.g-search-list-mask').wait_for(state='hidden', timeout=10000)
     dialog.locator('.gwSearchBox-description').dblclick()
     page.keyboard.press("Delete")
     page.wait_for_timeout(500)
