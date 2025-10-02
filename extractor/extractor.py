@@ -344,6 +344,85 @@ def _any_orderish_from_tables_or_text(pdf_path: str, full_text_upper: str) -> st
         return m2.group(1)
     return ""
 
+def _tsa_candidate_page(doc) -> list[int]:
+    pages = []
+    for i in range(len(doc)):
+        t = doc[i].get_text().upper()
+        if "TRANSFER AND SHIPPING AUTHORIZATION" in t and (
+            "1. REFERENCE NO" in t or "27. BOEING INTERNAL USE" in t
+        ):
+            pages.append(i)
+    return pages
+
+def _ocr_text_for_page(doc, page_index: int) -> str:
+    if not _OCR_AVAILABLE:
+        return ""
+    try: 
+        mat = fitz.Matrix(2, 2)
+        pm = doc[page_index].get_pixmap(matrix=mat, alpha=False)
+        from PIL import image
+        img = Image.open(io.BytesIO(pm.tobytes("png")))
+        return pytesseract.image_to_string(img).upper()
+    except Exception as e:
+        print(f"[extractor] OCR(text) failed on page {page_index+1}: {e}")
+        return ""
+
+def _normalize_ocr_noise(s: str) -> str:
+    if not s:
+        return s
+    s = s.replace("•", "-").replace("·", "-").replace("–", "-").replace("—", "-")
+    # common digit confusions
+    s = re.sub(r"(?<=\d)[lI](?=\d)", "1", s)  # digit-l/I-digit -> 1
+    s = re.sub(r"(?<=\d)O(?=\d)", "0", s)
+    # clean extra junk around tokens
+    s = re.sub(r"[^\n\rA-Z0-9\-\s:./]", "", s)
+    return s
+
+def _extract_ph_ref_from_text_priority_tsa(text_upper: str) -> str:
+    hits = re.findall(PH_REF_PATTERN, text_upper)
+    strict = [m.group(0) for m in re.finditer(PH_REF_PATTERN, text_upper)]
+    if strict:
+        for tok in strict:
+            if tok.upper().startswith("PHBBT"):
+                return tok.replace(" ", "").upper()
+        return strict[0].replace(" ", "").upper()
+    
+    m = re.search(r"[A-Z\?\./]{0,3}HBBT[-\s]?\d{6,9}", text_upper)
+    if m:
+        digits = re.search(r"\d{6,9}", m.group(0))
+        if digits:
+            return f"PHBBT-{digits.group(0)}"
+        return ""
+    
+def _order_from_tsa_window(text_upper: str) -> str:
+    s = text_upper.find("26. TOTAL PRICE")
+    if s == -1:
+        return ""
+    e = text_upper.find("27. BOEING INTERNAL USE", s)
+    segment = text_upper[s + len("26. TOTAL PRICE"): e if e != -1 else None]
+
+    # Preferred exact pattern
+    m = re.search(r"\b(507[A-Z0-9]{3})[-\s]?((?:8H)[A-Z0-9]{4})\b", segment)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+
+    # Tolerant fallback in TSA window:
+    seg = _normalize_ocr_noise(segment)
+    # allow '607' that OCR'd '5' as '6'; fix back to 507
+    m2 = re.search(r"\b([56]07[A-Z0-9]{3})[-\s]?((?:8H)[A-Z0-9]{4})\b", seg)
+    if m2:
+        left = m2.group(1)
+        if left.startswith("607"):
+            left = "507" + left[3:]
+        right = m2.group(2)
+        return f"{left}-{right}"
+
+    # last resort: any 6 + 6 in TSA window
+    m3 = re.search(r"\b([0-9]{6})[-\s]?([A-Z0-9]{6})\b", seg)
+    if m3:
+        return f"{m3.group(1)}-{m3.group(2)}"
+    return "" 
+
 def _order_between_totalPrice_internaluse(full_text_upper: str) -> str:
     if not full_text_upper:
         return ""
@@ -439,6 +518,15 @@ def extract_pdf_data(pdf_path: str) -> dict:
         with fitz.open(pdf_path) as doc:
             for page in doc:
                 full_text_upper += page.get_text().upper()
+            
+            tsa_pages = _tsa_candidate_page(doc)
+            tsa_text_upper = ""
+            for pi in tsa_pages:
+                tsa_text_upper += doc[pi].get_text().upper() + "\n"
+            
+            if tsa_pages and len(tsa_text_upper) < 50:
+                for pi in tsa_pages:
+                    tsa_text_upper += _ocr_text_for_page(doc, pi) + "\n"
 
             # reference_no & doc_type (PHCDT/PHBBT anywhere)
             mref = re.search(PH_REF_PATTERN, full_text_upper)
@@ -489,10 +577,22 @@ def extract_pdf_data(pdf_path: str) -> dict:
         elif "PHCDT" in fn:
             doc_type = "PHCDT"
 
+    if tsa_pages and not data.get("order_no"):
+        v_tsa = _order_from_tsa_window(tsa_text_upper)
+        if v_tsa:
+            data["order_no"] = v_tsa
+
     # Order no via doc-type rules (keeps your PHCDT/PHBBT logic)  :contentReference[oaicite:4]{index=4}
     order_no = _extract_order_no(pdf_path, full_text_upper, doc_type)
     if order_no:
         data["order_no"] = order_no.strip().upper()
+
+    if tsa_pages and data.get("reference_no"):
+        if "PHCDT" in full_text_upper and "PHBBT" in tsa_text_upper and data["reference_no"].startswith("PHCDT"):
+            ref_tsa = _extract_ph_ref_from_text_priority_tsa(tsa_text_upper)
+            if ref_tsa:
+                data["reference_no"] = ref_tsa
+                doc_type = "PHBBT"
 
     # Print and validate
     print("\n[PDF Extract] ===============================")
