@@ -344,6 +344,34 @@ def _any_orderish_from_tables_or_text(pdf_path: str, full_text_upper: str) -> st
         return m2.group(1)
     return ""
 
+def _order_between_totalPrice_internaluse(full_text_upper: str) -> str:
+    if not full_text_upper:
+        return ""
+    
+    start_lbl = "26. TOTAL PRICE"
+    end_lbl = "27. BOEING INTERNAL USE"
+
+    s = full_text_upper.find(start_lbl)
+    if s == -1:
+        return ""
+    e = full_text_upper.find(end_lbl, s)
+    if e == -1:
+        segment = full_text_upper[s + len(start_lbl):]
+    else:
+        segment = full_text_upper[s + len(start_lbl):e]
+    
+    preferred = re.search(r"\b(507\d{3})[-\s]?((?:8H)[A-Z0-9]{4})\b", segment)
+    if preferred:
+        left, right = preferred.group(1), preferred.group(2)
+        return f"{left}-{right}"
+    
+    generic = re.search(r"\b([0-9]{6})[-\s]?([A-Z0-9]{6})\b", segment)
+    if generic:
+        left, right = generic.group(1), generic.group(2)
+        return f"{left}-{right}"
+    
+    return ""
+
 # ---------------------- ORDER dispatcher by doc type ----------------------
 def _extract_order_no(pdf_path: str, full_text_upper: str, doc_type: str | None) -> str:
     if doc_type == "PHBBT":
@@ -362,6 +390,8 @@ def _extract_order_no(pdf_path: str, full_text_upper: str, doc_type: str | None)
         v = _order_from_text_by_pattern(full_text_upper, PHCDT_ORDER_PATTERN)
         if v: return v
         v = _order_from_tables_by_pattern(pdf_path, PHCDT_ORDER_PATTERN)
+        if v: return v
+        v = _order_between_totalPrice_internaluse(full_text_upper)
         if v: return v
         return _any_orderish_from_tables_or_text(pdf_path, full_text_upper)
 
@@ -384,6 +414,8 @@ def _extract_order_no(pdf_path: str, full_text_upper: str, doc_type: str | None)
     v = _order_from_tables_by_pattern(pdf_path, legacy_six)
     if v: return v
     v = _order_from_filename_by_pattern(pdf_path, legacy_six)
+    if v: return v
+    v = _order_between_totalPrice_internaluse(full_text_upper)
     if v: return v
     return _any_orderish_from_tables_or_text(pdf_path, full_text_upper)
 
