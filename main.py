@@ -11,7 +11,7 @@ from shipper.shipper import run_shipper_flow
 import smtplib
 from email.message import EmailMessage
 
-WATCH_FOLDER = os.getenv("WATCH_FOLDER", r"C:\Users\kosei\OneDrive - K Line Logistics U.S.A. Inc\Itochu Aviation (America) CH-47 - General\On Hand Report")
+WATCH_FOLDER = os.getenv("WATCH_FOLDER", r"C:\Users\KoseiShidoKLLUS-MIS\OneDrive - K Line Logistics U.S.A. Inc\Itochu Aviation (America) CH-47 - General\Test")
 
 #home PC
 # WATCH_FOLDER = r"C:\Users\Kosei\Projects\itochu-auto"
