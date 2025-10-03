@@ -15,8 +15,6 @@ try:
     from PIL import Image
 
     try:
-        # If Tesseract isn't on PATH, uncomment and set the path:
-        # pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
         _ = pytesseract.get_tesseract_version()
         _OCR_AVAILABLE = True
         _OCR_REASON = "ok"
@@ -130,7 +128,6 @@ def _ocr_page_for_tracking(doc, page_index: int) -> str:
         # Render at higher DPI for better OCR (zoom x2)
         mat = fitz.Matrix(2, 2)
         pm = page.get_pixmap(matrix=mat, alpha=False)
-        from PIL import Image  # ensure PIL is present even if import moved
         img = Image.open(io.BytesIO(pm.tobytes("png")))
         text = pytesseract.image_to_string(img)
     except Exception as e:
@@ -139,7 +136,7 @@ def _ocr_page_for_tracking(doc, page_index: int) -> str:
 
     lines = [ln.rstrip() for ln in text.split("\n") if ln.strip()]
 
-    # Label-driven search first (the docs use 'TRACKING #:' on labels)  :contentReference[oaicite:2]{index=2}
+    # Label-driven search first
     label_regex = re.compile(r"(UPS\s+GROUND|TRACKING\s*#?|TRK#)", re.IGNORECASE)
     for i, line in enumerate(lines):
         if not label_regex.search(line):
@@ -344,23 +341,29 @@ def _any_orderish_from_tables_or_text(pdf_path: str, full_text_upper: str) -> st
         return m2.group(1)
     return ""
 
-def _tsa_candidate_page(doc) -> list[int]:
+# ---------------------- TSA page helpers (scoped extraction) ----------------------
+def _tsa_candidate_pages(doc) -> list[int]:
+    """
+    TSA page looks like:
+      - 'TRANSFER AND SHIPPING AUTHORIZATION'
+      - and either '1. REFERENCE NO' or '27. BOEING INTERNAL USE'
+    """
     pages = []
     for i in range(len(doc)):
         t = doc[i].get_text().upper()
         if "TRANSFER AND SHIPPING AUTHORIZATION" in t and (
-            "1. REFERENCE NO" in t or "27. BOEING INTERNAL USE" in t
+            "REFERENCE NO" in t or "BOEING INTERNAL USE" in t
         ):
             pages.append(i)
     return pages
 
-def _ocr_text_for_page(doc, page_index: int) -> str:
+def _ocr_text_for_page_textonly(doc, page_index: int) -> str:
+    """OCR a page for general text (2x DPI)."""
     if not _OCR_AVAILABLE:
         return ""
-    try: 
+    try:
         mat = fitz.Matrix(2, 2)
         pm = doc[page_index].get_pixmap(matrix=mat, alpha=False)
-        from PIL import image
         img = Image.open(io.BytesIO(pm.tobytes("png")))
         return pytesseract.image_to_string(img).upper()
     except Exception as e:
@@ -368,87 +371,83 @@ def _ocr_text_for_page(doc, page_index: int) -> str:
         return ""
 
 def _normalize_ocr_noise(s: str) -> str:
+    """
+    Normalize common scanned-TSA OCR issues:
+      • bullet/dot → '-'
+      l/I between digits → '1'
+      O between digits → '0'
+      strip odd punctuation except A-Z0-9-:/.
+    """
     if not s:
         return s
     s = s.replace("•", "-").replace("·", "-").replace("–", "-").replace("—", "-")
-    # common digit confusions
-    s = re.sub(r"(?<=\d)[lI](?=\d)", "1", s)  # digit-l/I-digit -> 1
+    s = re.sub(r"(?<=\d)[lI](?=\d)", "1", s)
     s = re.sub(r"(?<=\d)O(?=\d)", "0", s)
-    # clean extra junk around tokens
     s = re.sub(r"[^\n\rA-Z0-9\-\s:./]", "", s)
     return s
 
-def _extract_ph_ref_from_text_priority_tsa(text_upper: str) -> str:
-    hits = re.findall(PH_REF_PATTERN, text_upper)
-    strict = [m.group(0) for m in re.finditer(PH_REF_PATTERN, text_upper)]
+def _collect_tsa_text(doc) -> tuple[str, list[int]]:
+    """
+    Concatenate TEXT from all TSA pages; if text is sparse, append OCR.
+    Return (UPPERCASE normalized text, page_indexes).
+    """
+    pages = _tsa_candidate_pages(doc)
+    tsa_text = ""
+    for pi in pages:
+        tsa_text += doc[pi].get_text().upper() + "\n"
+    if pages and len(tsa_text.strip()) < 100:  # scanned/low-text fallback
+        for pi in pages:
+            tsa_text += _ocr_text_for_page_textonly(doc, pi) + "\n"
+    return _normalize_ocr_noise(tsa_text), pages
+
+def _extract_ref_from_tsa_text(tsa_text_upper: str) -> str:
+    """
+    Prefer PHBBT if present; otherwise accept PHCDT; noisy '...HBBT-#######' → PHBBT-#######.
+    """
+    strict = [m.group(0) for m in re.finditer(PH_REF_PATTERN, tsa_text_upper)]
     if strict:
         for tok in strict:
             if tok.upper().startswith("PHBBT"):
                 return tok.replace(" ", "").upper()
         return strict[0].replace(" ", "").upper()
-    
-    m = re.search(r"[A-Z\?\./]{0,3}HBBT[-\s]?\d{6,9}", text_upper)
-    if m:
-        digits = re.search(r"\d{6,9}", m.group(0))
-        if digits:
-            return f"PHBBT-{digits.group(0)}"
-        return ""
-    
-def _order_from_tsa_window(text_upper: str) -> str:
-    s = text_upper.find("26. TOTAL PRICE")
-    if s == -1:
-        return ""
-    e = text_upper.find("27. BOEING INTERNAL USE", s)
-    segment = text_upper[s + len("26. TOTAL PRICE"): e if e != -1 else None]
 
-    # Preferred exact pattern
-    m = re.search(r"\b(507[A-Z0-9]{3})[-\s]?((?:8H)[A-Z0-9]{4})\b", segment)
+    # noisy '??HBBT-1234567' → PHBBT-1234567
+    m = re.search(r"[A-Z\?\./]{0,3}HBBT[-\s]?(\d{6,9})", tsa_text_upper)
     if m:
-        return f"{m.group(1)}-{m.group(2)}"
+        return f"PHBBT-{m.group(1)}"
+    return ""
 
-    # Tolerant fallback in TSA window:
-    seg = _normalize_ocr_noise(segment)
-    # allow '607' that OCR'd '5' as '6'; fix back to 507
-    m2 = re.search(r"\b([56]07[A-Z0-9]{3})[-\s]?((?:8H)[A-Z0-9]{4})\b", seg)
-    if m2:
-        left = m2.group(1)
+def _order_from_tsa_text(tsa_text_upper: str) -> str:
+    """
+    Look only in TSA text (which includes the 26→27 window) for:
+      - preferred '507xxx-8Hxxxx'
+      - tolerant variant '607xxx-8Hxxxx' (normalize 607→507)
+      - fix trailing 'L'→'1' in 8Hxxxx
+      - final generic 6+6 fallback
+    """
+    # Try around 'CLAIM:' first (appears near 26 → 27)
+    m = re.search(r"CLAIM[:\s]+([56]07[A-Z0-9]{3})[-\s]?((?:8H)[A-Z0-9]{4})", tsa_text_upper)
+    if m:
+        left = m.group(1)
         if left.startswith("607"):
             left = "507" + left[3:]
-        right = m2.group(2)
+        right = m.group(2)
+        if right.endswith("L"):
+            right = right[:-1] + "1"
         return f"{left}-{right}"
 
-    # last resort: any 6 + 6 in TSA window
-    m3 = re.search(r"\b([0-9]{6})[-\s]?([A-Z0-9]{6})\b", seg)
+    # Preferred exact pattern
+    m2 = re.search(r"\b(507[A-Z0-9]{3})[-\s]?((?:8H)[A-Z0-9]{4})\b", tsa_text_upper)
+    if m2:
+        left, right = m2.group(1), m2.group(2)
+        if right.endswith("L"):
+            right = right[:-1] + "1"
+        return f"{left}-{right}"
+
+    # Generic 6 + 6 as last resort (kept within TSA text scope)
+    m3 = re.search(r"\b([0-9]{6})[-\s]?([A-Z0-9]{6})\b", tsa_text_upper)
     if m3:
         return f"{m3.group(1)}-{m3.group(2)}"
-    return "" 
-
-def _order_between_totalPrice_internaluse(full_text_upper: str) -> str:
-    if not full_text_upper:
-        return ""
-    
-    start_lbl = "26. TOTAL PRICE"
-    end_lbl = "27. BOEING INTERNAL USE"
-
-    s = full_text_upper.find(start_lbl)
-    if s == -1:
-        return ""
-    e = full_text_upper.find(end_lbl, s)
-    if e == -1:
-        segment = full_text_upper[s + len(start_lbl):]
-    else:
-        segment = full_text_upper[s + len(start_lbl):e]
-    
-    preferred = re.search(r"\b(507\d{3})[-\s]?((?:8H)[A-Z0-9]{4})\b", segment)
-    if preferred:
-        left, right = preferred.group(1), preferred.group(2)
-        return f"{left}-{right}"
-    
-    generic = re.search(r"\b([0-9]{6})[-\s]?([A-Z0-9]{6})\b", segment)
-    if generic:
-        left, right = generic.group(1), generic.group(2)
-        return f"{left}-{right}"
-    
     return ""
 
 # ---------------------- ORDER dispatcher by doc type ----------------------
@@ -470,7 +469,8 @@ def _extract_order_no(pdf_path: str, full_text_upper: str, doc_type: str | None)
         if v: return v
         v = _order_from_tables_by_pattern(pdf_path, PHCDT_ORDER_PATTERN)
         if v: return v
-        v = _order_between_totalPrice_internaluse(full_text_upper)
+        # TSA-window fallback on full text
+        v = _order_from_tsa_text(full_text_upper)
         if v: return v
         return _any_orderish_from_tables_or_text(pdf_path, full_text_upper)
 
@@ -494,7 +494,8 @@ def _extract_order_no(pdf_path: str, full_text_upper: str, doc_type: str | None)
     if v: return v
     v = _order_from_filename_by_pattern(pdf_path, legacy_six)
     if v: return v
-    v = _order_between_totalPrice_internaluse(full_text_upper)
+    # TSA-window fallback on full text
+    v = _order_from_tsa_text(full_text_upper)
     if v: return v
     return _any_orderish_from_tables_or_text(pdf_path, full_text_upper)
 
@@ -513,22 +514,16 @@ def extract_pdf_data(pdf_path: str) -> dict:
     full_text_upper = ""
     doc_type = None
 
-    # Read all text up-front (this part should never throw a Tesseract error)
+    # Read all text up-front
     try:
         with fitz.open(pdf_path) as doc:
             for page in doc:
                 full_text_upper += page.get_text().upper()
-            
-            tsa_pages = _tsa_candidate_page(doc)
-            tsa_text_upper = ""
-            for pi in tsa_pages:
-                tsa_text_upper += doc[pi].get_text().upper() + "\n"
-            
-            if tsa_pages and len(tsa_text_upper) < 50:
-                for pi in tsa_pages:
-                    tsa_text_upper += _ocr_text_for_page(doc, pi) + "\n"
 
-            # reference_no & doc_type (PHCDT/PHBBT anywhere)
+            # --- TSA-targeted text + pages (scoped) ---
+            tsa_text_upper, tsa_pages = _collect_tsa_text(doc)
+
+            # reference_no & doc_type (global scan)
             mref = re.search(PH_REF_PATTERN, full_text_upper)
             if mref:
                 ref = mref.group(0).replace(" ", "").upper()
@@ -538,7 +533,17 @@ def extract_pdf_data(pdf_path: str) -> dict:
                 elif ref.startswith("PHBBT"):
                     doc_type = "PHBBT"
 
-            # shipped_from: Boeing block on any page  :contentReference[oaicite:3]{index=3}
+            # Prefer TSA page reference if available
+            if tsa_text_upper:
+                ref_tsa = _extract_ref_from_tsa_text(tsa_text_upper)
+                if ref_tsa:
+                    data["reference_no"] = ref_tsa
+                    if ref_tsa.startswith("PHBBT"):
+                        doc_type = "PHBBT"
+                    elif ref_tsa.startswith("PHCDT"):
+                        doc_type = doc_type or "PHCDT"
+
+            # shipped_from: Boeing block on any page
             shipped_from = ""
             for p in range(len(doc)):
                 block = _extract_boeing_block_from_page_text(doc[p].get_text())
@@ -557,7 +562,7 @@ def extract_pdf_data(pdf_path: str) -> dict:
             if mw:
                 data["carton_weight"] = f"{mw.group(1)} LB"
 
-            # tracking + carrier (text → fallback OCR if needed)
+            # tracking + carrier (keep existing behavior; not required for now)
             trk = _extract_tracking_from_doc(doc)
             if trk:
                 data["tracking_number"] = trk
@@ -566,7 +571,6 @@ def extract_pdf_data(pdf_path: str) -> dict:
                 data["carrier"] = "UNDEFINED"
 
     except Exception as e:
-        # Only genuine PyMuPDF errors should land here now
         print(f"PyMuPDF text extraction failed: {e}")
 
     # If doc_type missing, infer from filename
@@ -577,24 +581,32 @@ def extract_pdf_data(pdf_path: str) -> dict:
         elif "PHCDT" in fn:
             doc_type = "PHCDT"
 
-    if tsa_pages and not data.get("order_no"):
-        v_tsa = _order_from_tsa_window(tsa_text_upper)
+    # Try TSA-derived order first (scoped to TSA page)
+    if 'tsa_text_upper' in locals() and tsa_text_upper and not data.get("order_no"):
+        v_tsa = _order_from_tsa_text(tsa_text_upper)
         if v_tsa:
             data["order_no"] = v_tsa
 
-    # Order no via doc-type rules (keeps your PHCDT/PHBBT logic)  :contentReference[oaicite:4]{index=4}
-    order_no = _extract_order_no(pdf_path, full_text_upper, doc_type)
+    # Order no via doc-type rules (keeps your PHCDT/PHBBT logic)
+    order_no = ""
+    if tsa_text_upper:
+        order_no = _order_from_tsa_text(tsa_text_upper)
+    
+    if not order_no:
+        order_no = _extract_order_no(pdf_path, full_text_upper, doc_type)
+    
     if order_no:
         data["order_no"] = order_no.strip().upper()
 
-    if tsa_pages and data.get("reference_no"):
+    # Final preference: if both PHCDT and PHBBT exist, favor TSA-page PHBBT when current ref is PHCDT
+    if 'tsa_text_upper' in locals() and tsa_text_upper and data.get("reference_no"):
         if "PHCDT" in full_text_upper and "PHBBT" in tsa_text_upper and data["reference_no"].startswith("PHCDT"):
-            ref_tsa = _extract_ph_ref_from_text_priority_tsa(tsa_text_upper)
+            ref_tsa = _extract_ref_from_tsa_text(tsa_text_upper)
             if ref_tsa:
                 data["reference_no"] = ref_tsa
                 doc_type = "PHBBT"
 
-    # Print and validate
+    # Print and validate (TEMP: require only reference_no & order_no)
     print("\n[PDF Extract] ===============================")
     print(f"File: {_filename(pdf_path)}")
     for k in ["reference_no", "order_no", "shipped_from", "carton_dimensions", "carton_weight", "tracking_number", "carrier"]:
@@ -603,7 +615,8 @@ def extract_pdf_data(pdf_path: str) -> dict:
         print(f"  [NOTE] OCR disabled: {_OCR_REASON}  --> UPS label text/images will not be parsed.")
     print("===========================================\n")
 
-    missing = [k for k, v in data.items() if not v or (isinstance(v, str) and not v.strip())]
+    required_now = ["reference_no", "order_no"]  # TEMP: focus on these only
+    missing = [k for k in required_now if not data.get(k) or (isinstance(data.get(k), str) and not data.get(k).strip())]
     if missing:
         raise ValueError(f"Missing required extracted fields: {', '.join(missing)}")
     return data
