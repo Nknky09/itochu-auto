@@ -22,7 +22,7 @@ def get_highest_rcn_reference(page):
     print(f'Found {count} RCN Reference cells.')
 
     rcn_numbers = []
-    for i in range(min(count, 25)):
+    for i in range(min(count, 10)):
        cell_text = rcn_cells.nth(i).inner_text().strip()
        print(f"Row {i} cell: '{cell_text}'")
        m = re.match(r"^(\d{4})\s+\w+", cell_text)
