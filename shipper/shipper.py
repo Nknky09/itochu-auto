@@ -26,6 +26,8 @@ def run_shipper_flow():
 
     rc_num = fill_new_shipment_form(page, shipment, rcn_number)   
 
+    
+
     return rcn_number, rc_num
 
 

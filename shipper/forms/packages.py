@@ -1,4 +1,5 @@
 import re
+from playwright.sync_api import Page
 
 def open_packages_edit(page):
     try:
@@ -45,7 +46,7 @@ def open_packages_edit(page):
         print(f"Unexpected error in open_packages_edit: {e}")
 
 
-def fill_edit_package_and_complete(page, shipment):
+def fill_edit_package_and_complete(page:Page, shipment, *, do_print: bool = True, printer_name: str = "KUS-CW1-NYC - US_NYC_CANON"):
     try:
         # 1 Package Type
         page.locator('.gwSearchBox-description').first.click()
@@ -97,23 +98,38 @@ def fill_edit_package_and_complete(page, shipment):
         # 7 Save and Complete
         page.get_by_role('button', name='Save', exact=True).click()
         page.wait_for_timeout(1000)
-        page.get_by_role('button', name='Complete').click()
-        page.wait_for_timeout(3000)
+        
 
         # 8 Navigate to Documents and Deliver
-        """
-        page.get_by_role('button', name='Documents').click()
-        page.wait_for_timeout(1000)
-        page.get_by_role('menuitem', name='US', exact=True).locator('i').click()
-        page.get_by_role('menuitem', name='Receipt Instruction - KUS').click()
-        page.get_by_text('Receipt Instruction - KUS Recipients Documents and Cover Preview').click()
-        page.locator('.wtg-icon.s-icon-caret-switch').click()
-        page.get_by_role('textbox', name='Printer').click()
-        page.get_by_text('KUS-CW1-NYC - US_NYH_CANON').click()
-        page.get_by_role('button', name='Deliver').click()
-  
-        print("Package fill and delivery complete.")
-        """
+        if do_print:
+            try:
+                #Open Documents dropdown menu
+                page.get_by_role('button', name='Documents').click()
+                # Click 'US'
+                page.get_by_role('menuitem', name='US', exact=True).click()
+                page.get_by_text('US', exact=True).click()
+                #Select Receipt Instruction
+                page.get_by_role('menuitem', name='Receipt Instruction - KUS').click()
+                page.get_by_text('Receipt Instruction - KUS').click()
+                page.wait_for_timeout(5000)
+                #Printer dropdown select printer
+                page.locator('.wtg-input').first.click()
+                page.get_by_text('.wtg-input__content').first.click()
+                page.get_by_role('textbox', name='Printer').click()
+                #Select printer by name
+                page.get_by_text(printer_name).click()
+                #Deliver / Print doc
+                #page.get_by_role('button', name='Deliver').click()
+                #small wait
+                page.wait_for_timeout(3500)
+                print(f"[PRINT] 'Receipt Instruction - KUS' sent to '{printer_name}'.")
+            except Exception as e:
+                print(f"[PRINT] Failed to print 'Receipt Instruction - KUS': {e}'")
+
+
+        #9 Complete
+        page.get_by_role('button', name='Complete').click()
+        page.wait_for_timeout(3000)
         
     except Exception as e:
         print(f"Error in fill_edit_package_and_complete: {e}")
